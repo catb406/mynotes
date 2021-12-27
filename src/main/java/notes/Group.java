@@ -3,17 +3,20 @@ package notes;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 
-import java.util.ArrayList;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.UUID;
 
 public class Group {
-    private final UUID id;
+    private final Integer id;
     private String name;
     private ObservableList<Note> notes = FXCollections.observableArrayList();
 
 
-    public Group(String name){
-        this.id=UUID.randomUUID();
+    public Group(String name, Integer id){
+        this.id=id;
         this.name=name;
     }
 
@@ -21,7 +24,7 @@ public class Group {
         this.name = name;
     }
 
-    public UUID getId() {
+    public Integer getId() {
         return id;
     }
 
@@ -33,11 +36,57 @@ public class Group {
         return notes;
     }
 
-    public void addNote (Note note){
+    public Note addNoteToDb (String name, Connection connection){
+        PreparedStatement statement = null;
+        Note note=null;
+        try {
+            statement=connection.prepareStatement("INSERT INTO notes (name, id_group) VALUES (?,?) RETURNING id_note");
+            statement.setString(1,  name );
+            statement.setInt(2, this.getId());
+            ResultSet rs=statement.executeQuery();
+           while (rs.next()){
+               note=new Note(name, rs.getInt("id_note"),"");
+               this.notes.add(note);
+           }
+        } catch (SQLException throwables) {
+            throwables.printStackTrace();
+        }
+        try {
+            statement.close();
+        } catch (SQLException throwables) {
+            throwables.printStackTrace();
+        }
+        try {
+            connection.close();
+        } catch (SQLException throwables) {
+            throwables.printStackTrace();
+        }
+        return note;
+    }
+
+    public void addNote(Note note){
         this.notes.add(note);
     }
 
-    public void removeNote(UUID id){
-        notes.removeIf(note -> note.getId() == id);
+    public void removeNote(Integer id, Connection connection){
+        PreparedStatement statement = null;
+        try {
+            statement=connection.prepareStatement("DELETE FROM notes WHERE id_note=?");
+            statement.setInt(1, id);
+            statement.execute();
+            notes.removeIf(note -> note.getId() == id);
+        } catch (SQLException throwables) {
+            throwables.printStackTrace();
+        }
+        try {
+            statement.close();
+        } catch (SQLException throwables) {
+            throwables.printStackTrace();
+        }
+        try {
+            connection.close();
+        } catch (SQLException throwables) {
+            throwables.printStackTrace();
+        }
     }
 }

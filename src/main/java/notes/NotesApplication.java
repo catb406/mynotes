@@ -7,6 +7,10 @@ import javafx.stage.Stage;
 
 import java.io.IOException;
 
+//STEP 1. Import required packages
+import java.sql.DriverManager;
+import java.sql.Connection;
+import java.sql.SQLException;
 public class NotesApplication extends Application {
     @Override
     public void start(Stage stage) throws IOException {
@@ -21,3 +25,4 @@ public class NotesApplication extends Application {
         launch();
     }
 }
+

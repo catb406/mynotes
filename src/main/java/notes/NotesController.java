@@ -3,23 +3,18 @@ package notes;
 import javafx.beans.value.ObservableValue;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
-import javafx.event.EventHandler;
 import javafx.fxml.FXML;
-import javafx.scene.Scene;
 import javafx.scene.control.*;
-import javafx.scene.control.cell.TextFieldListCell;
 import javafx.scene.layout.AnchorPane;
-import javafx.scene.text.Font;
-import javafx.scene.text.Text;
-import javafx.stage.Modality;
-import javafx.stage.Stage;
-import javafx.util.Callback;
 
+import java.sql.*;
 import java.util.ArrayList;
 import java.util.Objects;
-import java.util.Set;
 
 public class NotesController {
+    static final String DB_URL = "jdbc:postgresql://127.0.0.1:5432/mynotes";
+    static final String USER = "postgres";
+    static final String PASS = "1";
     private Integer count = 0;
 
     ObservableList<Group> groups = FXCollections.observableArrayList();
@@ -139,10 +134,9 @@ public class NotesController {
             emptyGroupNameErr.setVisible(true);
         } else {
             emptyGroupNameErr.setVisible(false);
-            Group group=new Group(name);
-            groups.add(group);
+            addGroup(name);
             popupGroup.setVisible(false);
-            groupsList.getSelectionModel().select(group);
+            groupsList.getSelectionModel().select(groups.get(groups.size()-1));
             groupNameInput.setText("");
         }
     }
@@ -192,12 +186,11 @@ public class NotesController {
         } else {
             emptyGroupNameErr.setVisible(false);
 
-            Note note=new Note(name);
             Group group=groupsList.getSelectionModel().getSelectedItem();
             if (group==null){
                 group=groups.get(0);
             }
-            group.addNote(note);
+            Note note=group.addNoteToDb(name, Objects.requireNonNull(getDbConnection()));
             popupNote.setVisible(false);
             notesList.getSelectionModel().select(note);
             noteNameInputField.setText("");
@@ -214,7 +207,8 @@ public class NotesController {
     protected void onDeleteGroupBtnClick(){
         int selectedID=groupsList.getSelectionModel().getSelectedIndex();
         if (selectedID!=-1){
-                groupsList.getItems().remove(selectedID);
+               Group group=groupsList.getItems().get(selectedID);
+               removeGroup(group.getId());
         }
     }
 
@@ -222,7 +216,9 @@ public class NotesController {
     protected void onDeleteNoteBtnClick(){
         int selectedID = notesList.getSelectionModel().getSelectedIndex();
         if (selectedID!=-1){
-            notesList.getItems().remove(selectedID);
+            Note note=notesList.getItems().get(selectedID);
+            int selectedGroupID=groupsList.getSelectionModel().getSelectedIndex();
+            groups.get(selectedGroupID).removeNote(note.getId(), getDbConnection());
         }
     }
 
@@ -237,21 +233,26 @@ public class NotesController {
 
         Note item = notesList.getSelectionModel().getSelectedItem();
         if (item!=null){
-            item.setContent(content);
+            item.setContent(content, getDbConnection());
         }
     }
 
 
     @FXML
     public void initialize() {
+        try {
+            createTables();
+        } catch (SQLException e){
+            System.out.println(e.getMessage());
+            return;
+        }
+        getGroups();
         note.setEditable(false);
         note.setText("выберите заметку...");
-        groups.add(new Group("моя группа"));
         groupsList.setItems(groups);
         groupsList.setCellFactory(param -> new GroupCell());
         groupsList.getSelectionModel().selectedItemProperty().addListener(this::selectEntity);
 
-        notesList.setItems(groups.get(0).getNotes());
         notesList.setCellFactory(param -> new NoteCell());
         notesList.getSelectionModel().selectedItemProperty().addListener(this::selectEntity);
     }
@@ -291,6 +292,160 @@ public class NotesController {
             String userData =item.getContent();
             note.setText(userData);
             note.setEditable(true);
+        }
+    }
+
+    private static Connection getDbConnection(){
+        try {
+            Class.forName("org.postgresql.Driver");
+        } catch (ClassNotFoundException e) {
+            System.out.println("Where is your PSQL JDBC Driver?");
+            e.printStackTrace();
+            return null;
+        }
+        System.out.println("PostgreSQL JDBC Driver successfully connected");
+        Connection connection = null;
+
+        try {
+            connection = DriverManager
+                    .getConnection(DB_URL, USER, PASS);
+
+        } catch (SQLException e) {
+            System.out.println("Connection Failed");
+            e.printStackTrace();
+            return null;
+        }
+
+        if (connection != null) {
+            System.out.println("You successfully connected to database now");
+        } else {
+            System.out.println("Failed to make connection to database");
+        }
+        return connection;
+    }
+
+    private void createTables() throws SQLException {
+        Connection connection = null;
+        Statement statement = null;
+
+        String createNotesSQL = "CREATE TABLE IF NOT EXISTS notes ("
+                + "id_note SERIAL PRIMARY KEY, "
+                + "id_group INTEGER NOT NULL, "
+                + "content VARCHAR(20), "
+                + "name VARCHAR(20) NOT NULL, "
+                + "CONSTRAINT fk_group FOREIGN KEY(id_group)  REFERENCES groups(id_group)" +
+                ")";
+        String createGroupsSQL = "CREATE TABLE IF NOT EXISTS groups ("
+                + "id_group SERIAL PRIMARY KEY, "
+                + "name VARCHAR(20) NOT NULL "
+                + ")";
+
+        try {
+            connection=getDbConnection();
+            statement = connection.createStatement();
+
+            // выполнить SQL запрос
+            statement.execute(createGroupsSQL);
+            System.out.println("Table \"groups\" is created!");
+            statement.execute(createNotesSQL);
+            System.out.println("Table \"notes\" is created!");
+        } catch (SQLException e) {
+            System.out.println(e.getMessage());
+        } finally {
+            if (statement != null) {
+                statement.close();
+            }
+            if (connection != null) {
+                connection.close();
+            }
+        }
+    }
+
+    private void getGroups() {
+        Connection connection = null;
+        Statement statement =  null;
+
+        try {
+            connection=getDbConnection();
+            assert connection != null;
+            statement=connection.createStatement();
+            String selectGroupsQuery = "SELECT * FROM groups";
+            ResultSet rs = statement.executeQuery(selectGroupsQuery);
+            while (rs.next()){
+                String name = rs.getString("name");
+                Integer id =  rs.getInt("id_group");
+                Group group=new Group(name, id);
+                String selectNotesQuery = "SELECT * FROM notes WHERE id_group="+id;
+                Statement newStatement = connection.createStatement();
+                ResultSet newrs = newStatement.executeQuery(selectNotesQuery);
+                while (newrs.next()){
+                    String noteName =newrs.getString("name");
+                    Integer idNote = newrs.getInt("id_note");
+                    String content=newrs.getString("content");
+                    Note note = new Note(noteName, idNote, content);
+                    group.addNote(note);
+                }
+                groups.add(group);
+            }
+        } catch (SQLException throwables) {
+            throwables.printStackTrace();
+        }
+        finally {
+            try {
+                statement.close();
+            } catch (SQLException e){
+                System.out.println(e.getMessage());
+            }
+            try {
+                connection.close();
+            } catch (SQLException e){
+                System.out.println(e.getMessage());
+            }
+        }
+    }
+
+    private void addGroup(String name){
+        Connection connection = null;
+        PreparedStatement statement = null;
+        try {
+            connection=getDbConnection();
+            statement=connection.prepareStatement("INSERT INTO groups (name) VALUES (?) RETURNING id_group");
+            statement.setString(1,   name );
+            ResultSet rs=statement.executeQuery();
+            while (rs.next()){
+                Group group=new Group(name, rs.getInt("id_group"));
+                groups.add(group);
+            }
+        } catch (SQLException throwables) {
+            throwables.printStackTrace();
+        }
+        try {
+            connection.close();
+        } catch (SQLException throwables) {
+            throwables.printStackTrace();
+        }
+    }
+
+    private void removeGroup(Integer id){
+        Connection connection = null;
+        PreparedStatement statement = null;
+        try {
+            connection=getDbConnection();
+            statement=connection.prepareStatement("DELETE FROM notes WHERE id_group IN (SELECT ? FROM groups)");
+            statement.setInt(1, id);
+            statement.execute();
+            statement=connection.prepareStatement("DELETE FROM groups WHERE id_group=?");
+            statement.setInt(1, id);
+            statement.execute();
+            groups.removeIf(note -> note.getId() == id);
+
+        } catch (SQLException throwables) {
+            throwables.printStackTrace();
+        }
+        try {
+            connection.close();
+        } catch (SQLException throwables) {
+            throwables.printStackTrace();
         }
     }
 }
